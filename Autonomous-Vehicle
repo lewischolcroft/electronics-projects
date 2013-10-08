@@ -1,1 +1,651 @@
-// first line
+#include <NewPing.h>
+#include <Servo.h> 
+
+// Motor Pins
+#define STBY  10                   // standby
+// Motor A
+#define PWMA  13                   // Speed control
+#define AIN1  6                    // Direction 
+#define AIN2  8                    // Direction 
+// Motor B
+#define PWMB  9                    // Speed control
+#define BIN1  11                   // Direction
+#define BIN2  4                    // Direction
+
+// Ultrasonic
+#define TRIGGER_PIN  0             // Pin to trigger pin on the ultrasonic sensor.
+#define ECHO_PIN     1             // Pin to echo pin on the ultrasonic sensor.
+#define MAX_DISTANCE 350           // Maximum distance we want to ping for (in centimeters). Maximum sensor distance is rated at 400-500cm.
+NewPing sonar(TRIGGER_PIN, ECHO_PIN, MAX_DISTANCE);     // NewPing setup of pins and maximum distance.
+
+// Other Pins
+#define ledRed       12
+#define servopin     A5
+#define lightsensor  A2
+#define ledlights    7
+#define steeringpin  A3
+
+
+
+#define SOUNDPINR    2
+#define SOUNDPINL    3
+
+// Constants for speed, turns, etc
+#define MAXIMUMTURNTIME 350        // time for turns
+#define SERVOWHEELDELAYTIME 300    // time delay for steering servo movement
+#define STOPDELAY 100              // time delay for stop
+#define MINDISTANCE 40             // Elaxisth apostash apo empodio opoy stamataei
+#define MIDDISTANCE 80             // Mesh apostash apo empodio (gia strofes xwris stamathma)
+#define MAXDISTANCE 150            // Megisth apostash opoy ayksanei taxythta
+#define MAXSTUCKCOUNTER 50         // Counter for detecting when it's stuck
+#define MAXSPEED 100               // Maximum Speed
+#define LEFTTHROTTLE 100           // Left Motor Minimum Thorttle
+#define RIGHTTHROTTLE 100          // Right Motor Minimum Thorttle
+#define REVERSETURNSSPEED 150      // Speed for reverse & turns
+#define STEERINGPOS 82
+#define KEFALIPOS 92               // Start position (straight) of eyes servo
+#define MAXIMUMSERVOANGLE 80       // ultrasonic servo turn for lookups
+#define SERVODELAYTIME 400         // time delay for eyes servo movement
+
+// RC RX
+#define RX2  5                     // Pin of Channel 2 (throttle)
+#define RX1 A4                     // Pin of Channel 1 (steering)
+
+Servo kefali;                      // Servo for "eyes"
+Servo steering;                    // Servo for rear wheel
+
+// Generic Variables
+int LeftDistance = 500;
+int MiddleDistance = 500;
+int RightDistance = 500;
+int spd = 0;
+int temp = 0;
+int gkazi = 0;  
+int turntx = 0;
+int ch1;              
+int ch2;
+int ch3;
+
+int nextturn = 0;                   // Epomenh kinhsh na stripsei pros th meria poy akoyse hxo
+
+// DEBUGGING OPTIONS
+const int motorson = 1;             // 1 for motor, 0 for tests with no movement
+const int debug = 0;                // 1 for serial output, 0 for nothing, 2 for display only distance
+
+
+
+// ------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// Setup procedure 
+
+void setup()
+{
+  blinkLed(1);
+  attachInterrupt(0,stopandturnright,RISING);
+  attachInterrupt(1,stopandturnleft,RISING);
+  pinMode(STBY, OUTPUT);
+  pinMode(PWMA, OUTPUT);
+  pinMode(AIN1, OUTPUT);
+  pinMode(AIN2, OUTPUT);
+  pinMode(PWMB, OUTPUT);
+  pinMode(BIN1, OUTPUT);
+  pinMode(BIN2, OUTPUT);
+  pinMode(RX2, INPUT);
+  pinMode(RX1, INPUT);
+  pinMode(ledRed, OUTPUT);
+  pinMode(ledlights, OUTPUT);
+  pinMode(servopin, OUTPUT);
+  pinMode(steeringpin, OUTPUT);
+  kefali.attach(servopin);
+  kefali.write(KEFALIPOS);
+  steering.attach(steeringpin);
+  steering.write(STEERINGPOS);
+  digitalWrite(ledRed, LOW);
+  digitalWrite(ledlights, LOW);
+  blinkLed(2);
+  if ((debug==1) || (debug==2) || (debug==3)) Serial.begin(9600);
+  delay(500);
+}
+
+
+
+// ------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// Main procedure
+
+void loop()
+{
+  if (nextturn==1)
+  {
+    turnleft();
+    nextturn=0;
+  }
+  if (nextturn==2)
+  {
+    turnright();
+    nextturn=0;
+  }
+  if (checkfortx() == 1)                                  // An h TK einai anoixth
+    remotedrive();                                        // Odhghma me thlekatefthinsi
+  else                                                    // Alliws
+    drive();                                              // Autonomh odhghsh
+  if ((debug==1) || (debug==2) || (debug==3))
+    delay(200);
+}
+
+
+
+// ------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// Odhghsh me TK
+
+void remotedrive()
+{
+  checklight();                                           // Elegoxs gia ambient fwtismo kai anama twn fwtwn
+  int foo=getdistance();                                  // Gia na anabei to endeiktiko led, gia tdokimes metrhshs
+  ch1 = pulseIn(RX1, HIGH, 25000);
+  // terma deksia 900
+  // terma aristera 1995
+  // mesh 1440-1475
+  ch2 = pulseIn(RX2, HIGH, 25000);
+  // terma gkazi 1985
+  // terma freno 1240
+  // mesh 1440 - 1480
+  if (debug==1) 
+  {
+    Serial.print("CH1: ");
+    Serial.print(ch1);
+    Serial.print(" - CH2: ");
+    Serial.println(ch2);
+  }
+  if ((ch1>1440) && (ch1<1475))
+    steering.write(STEERINGPOS);
+  if ((ch1>920) && (ch1<1430))
+  {
+    if ((ch1>920) && (ch1<1430))
+    { 
+      turntx = map(ch1, 920, 1420, 0, STEERINGPOS);
+      turnrightrx(turntx);
+//       return;
+    }
+    else
+    {
+      steering.write(STEERINGPOS);
+//      stopvehicle();
+    }
+  }
+  if ((ch1>1480) && (ch1<2000))
+  {
+    if ((ch1>1480) && (ch1<2000))
+    {
+      turntx = map(ch1, 1480, 2000, STEERINGPOS, 160);
+      turnleftrx(turntx);
+//      return;
+    }
+    else
+    {
+      steering.write(STEERINGPOS);
+//      stopvehicle();
+    }
+  }    
+  if ((ch2>1060) && (ch2<1430))
+  {
+    gkazi = map(ch2, 1430, 1060, 1, 250);
+    backwardstx(gkazi);
+  }
+  if ((ch2>1480) && (ch2<1990))
+  {
+    gkazi = map(ch2,1480, 1990, 1,250);
+    forwardtx(gkazi);
+  }
+  if ((ch2>1440) && (ch2<1490))
+  {
+    stopvehicle();
+  }
+}
+
+
+
+// ------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// Elegxos gia TK
+
+int checkfortx()
+{
+  ch2 = pulseIn(RX2, HIGH, 25000);
+  if (ch2<950)
+    return 0;
+  else
+    return 1;
+}
+
+
+// ------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// STOP & Aristerh strofh
+
+void stopandturnleft()
+{
+  if (debug==1) Serial.println("Sound Detected - Turn Left");  
+  nextturn=1;
+}
+
+
+
+// ------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// STOP & Deksia strofh
+
+void stopandturnright()
+{
+  if (debug==1) Serial.println("Sound Detected - Turn Right");  
+  nextturn=2;
+}
+
+
+// ------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// Aristerh strofh
+
+void turnleft()
+{
+  if (debug==1) Serial.println("Turn Left");  
+  steering.write(160);
+  delay(SERVOWHEELDELAYTIME);  
+  move(1, REVERSETURNSSPEED, 1);
+  move(2, REVERSETURNSSPEED, 0);
+  delay(MAXIMUMTURNTIME);
+  stopvehicle();
+  steering.write(STEERINGPOS);
+  delay(SERVOWHEELDELAYTIME);
+
+}
+
+
+
+// ------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// Deksia strofh
+
+void turnright()
+{
+  if (debug==1) Serial.println("Turn Right");  
+  steering.write(5);
+  delay(SERVOWHEELDELAYTIME);
+  move(1, REVERSETURNSSPEED, 0); 
+  move(2, REVERSETURNSSPEED, 1); 
+  delay(MAXIMUMTURNTIME);
+  stopvehicle();
+  steering.write(STEERINGPOS);
+  delay(SERVOWHEELDELAYTIME);
+}
+
+
+
+// ------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// Strofh deksia 3 fores (180 moires)
+
+void turn3times()
+{
+  if (debug==1) Serial.println("TX Turn 180 degrees");  
+  steering.write(0);
+  delay(SERVOWHEELDELAYTIME);
+  move(1, REVERSETURNSSPEED, 0); 
+  move(2, REVERSETURNSSPEED, 1); 
+  delay(MAXIMUMTURNTIME*2);
+  stopvehicle();
+  steering.write(STEERINGPOS);
+  delay(SERVOWHEELDELAYTIME);
+}
+
+
+// ------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// Aristerh strofh apo TK
+
+void turnleftrx(int val)
+{
+  int tmp;
+  if (debug==1) Serial.println("TX Turn Left");
+  steering.write(val);
+}
+
+
+
+// ------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// Deksia strofh apo TK
+
+void turnrightrx(int val)
+{
+  if (debug==1) Serial.println("TX Turn Right"); 
+  steering.write(val);
+}
+
+
+
+// ------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// Autonomh odhghsh
+
+void drive()
+{
+  
+  checklight();                                           // Elegoxs gia ambient fwtismo kai anama twn fwtwn
+ 
+  MiddleDistance = getdistance();
+  if (MiddleDistance==0)
+    MiddleDistance=999;
+  if (MiddleDistance>MAXDISTANCE)
+    spd=spd+10;
+  if (MiddleDistance<MAXDISTANCE)
+    spd=spd-10;
+  if (spd>MAXSPEED)
+    spd=MAXSPEED;
+  if (spd<1)
+    spd=1;
+  if (debug==1) 
+  {
+    Serial.print("Drive with speed: ");
+    Serial.println(spd);
+  }
+  if (checkfortx() == 1)                                  // An h TK einai anoixth
+  {
+    remotedrive();                                        // Odhghma me thlekatefthinsi
+    return;
+  }
+  if (MiddleDistance>=MINDISTANCE)                       // Apostash > orio
+  {
+    if (debug==1) Serial.println("Apostash >50");      
+    //    move forward
+    forward(spd);
+    return;
+  }
+  else                                                   // Apostash < orio
+  {
+    if (debug==1) Serial.println("Apostash < orio - else");
+    spd=0;
+    stopvehicle();
+    // elegxoyme apostaseis
+    if (debug==1) Serial.println("Turn Ultrasonic Left for Distance Check");
+    head(-MAXIMUMSERVOANGLE);
+    LeftDistance=getdistance();
+    if (LeftDistance==0)
+      LeftDistance=999;
+    if (debug==1) Serial.println("Turn Ultrasonic Right for Distance Check");      
+    head(0);
+    head(MAXIMUMSERVOANGLE);
+    RightDistance=getdistance();
+    if (RightDistance==0)
+      RightDistance=999;
+    if (debug==1) Serial.println("Turn Ultrasonic Straight for Distance Check");
+    head(0);
+    MiddleDistance=getdistance();
+    if (MiddleDistance==0)
+      MiddleDistance=999;
+    if ((LeftDistance<15) && (MiddleDistance<15) && (RightDistance<15))
+    {
+      if (debug==1)
+        Serial.println("Distance <15 left/right/center -- going backwards");
+      backwards();
+      temp=0;
+      while (getdistance()<=(MINDISTANCE))
+      {
+        temp=temp+1;
+        delay(10);
+        if (temp>MAXSTUCKCOUNTER)         // Kollhsame
+        {
+          stopvehicle();
+          turn3times();
+          temp=0;
+          return;
+        }
+        if (debug==1) 
+        {
+          Serial.print("Going backwards: ");
+          Serial.println(temp);
+        }
+      }
+      spd=0;   
+      stopvehicle();
+      return;
+    }
+    if ((LeftDistance>RightDistance) && (LeftDistance>MINDISTANCE))
+    {
+      turnleft();
+      return;
+    }
+    if ((RightDistance>LeftDistance) && (RightDistance>MINDISTANCE))
+    {
+      turnright();
+      return;
+    }
+    if (LeftDistance>RightDistance)    // Apo aristera einai pio makria
+    {
+      if (debug==1) Serial.println("Turn Left twice to return to left position");        
+      turnleft();
+      if (debug==1) Serial.println("Drive backwards");
+      backwards();
+      temp=0;
+      while (getdistance()<=(MINDISTANCE))
+      {
+        temp=temp+1;
+        delay(10);
+        if (temp>MAXSTUCKCOUNTER)         // Kollhsame
+        {
+          stopvehicle();
+          turn3times();
+          temp=0;
+          return;
+        }          
+        if (debug==1) 
+        {
+          Serial.print("Going backwards: ");
+          Serial.println(temp);
+        }          
+      }
+      spd=0;        
+      stopvehicle();
+      return;
+    }
+    else                              // Apo deksia einai pio makria
+    {
+      if (debug==1) Serial.println("Drive backwards");        
+      turnright();
+      backwards();
+      temp=0;
+      while (getdistance()<=(MINDISTANCE))
+      {
+        temp=temp+1;
+        delay(10);
+        if (temp>MAXSTUCKCOUNTER)         // Kollhsame
+        {
+          stopvehicle();
+          turn3times();
+          temp=0;
+          return;
+        }          
+        if (debug==1) 
+        {
+          Serial.print("Going backwards: ");
+          Serial.println(temp);
+        }
+      }
+      spd=0;        
+      stopvehicle();
+      return;
+    }
+  }
+}
+
+
+
+// ------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// Kinhsh twn moter
+
+void move(int motor, int speed, int direction)
+{
+//Move specific motor at speed and direction
+//motor: 0 for B 1 for A
+//speed: 0 is off, and 255 is full speed
+//direction: 0 clockwise, 1 counter-clockwise
+
+  if (motorson==1)
+  {
+    digitalWrite(STBY, HIGH); //disable standby
+    boolean inPin1 = LOW;
+    boolean inPin2 = HIGH;
+    if(direction == 1)
+    {
+      inPin1 = HIGH;
+      inPin2 = LOW;
+    }
+    if(motor == 1)
+    {
+      digitalWrite(AIN1, inPin1);
+      digitalWrite(AIN2, inPin2);
+      analogWrite(PWMA, speed);
+    }
+    else
+    {
+      digitalWrite(BIN1, inPin1);
+      digitalWrite(BIN2, inPin2);
+      analogWrite(PWMB, speed);
+    }
+  }
+}
+
+
+
+// ------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// Stamathma twn moter
+
+void stopvehicle(){
+//enable standby  
+  if (debug==1) Serial.println("Stop");
+  digitalWrite(STBY, LOW);
+  delay(STOPDELAY);
+}
+
+
+
+// ------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// Kinhsh pros ta pisw
+
+void backwards()
+{
+  if (debug==1) Serial.println("Back");  
+  move(1, REVERSETURNSSPEED, 1);
+  move(2, REVERSETURNSSPEED, 1);
+}
+
+
+
+// ------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// Kinhsh pros ta empros
+
+void forward(int speedvalue)
+{
+  if (debug==1) Serial.println("Forward");    
+  move(1, LEFTTHROTTLE+speedvalue, 0);
+  move(2, RIGHTTHROTTLE+speedvalue, 0);
+}
+
+
+
+
+// ------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// Kinhsh pros ta empros me TK
+
+void forwardtx(int speedvalue)
+{
+  if (debug==1) Serial.println("Remote Forward");    
+  move(1, speedvalue, 0);
+  move(2, speedvalue, 0);
+}
+
+
+
+// ------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// Kinhsh pros ta pisw
+
+void backwardstx(int speedvalue)
+{
+  if (debug==1) Serial.println("Back");  
+  move(1, speedvalue, 1);
+  move(2, speedvalue, 1);
+}
+
+
+
+// ------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// Ypologismos apostashs
+
+int getdistance()
+{
+  unsigned int uS = sonar.ping();
+  delay(10);
+  if ((debug==1) || (debug==2)) 
+  {
+    Serial.print("Distance: ");
+    Serial.println(uS / US_ROUNDTRIP_CM);
+  }
+  int apostash = (uS / US_ROUNDTRIP_CM);
+  if ((apostash>0) && (apostash<=100)) 
+  {
+    if (debug==1) Serial.println("Turn on Red Led (>0 <=100)");
+    digitalWrite(ledRed, HIGH);
+  }
+  else
+  {
+    if (debug==1) Serial.println("Turn off Red Led (>100)");
+    digitalWrite(ledRed, LOW);
+  }
+  return apostash;
+}
+
+
+
+// ------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// Anabosbhma kokkinoy led
+
+void blinkLed(int x)
+{
+  for (int i=1; i<=x; i++)
+  {
+    digitalWrite(ledRed, HIGH);
+    delay(100);
+    digitalWrite(ledRed, LOW);
+    delay(100);
+  }
+}
+
+
+
+// ------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// Elegxos ambient fwtismoy gia anama fwtwn poreias
+
+void checklight()
+{
+  int light;
+  light=(analogRead(lightsensor)/2);
+  if (debug==1)
+  {
+    Serial.print("Light: ");
+    Serial.print(light);
+    if (light>200)
+       Serial.println(" - Good light");
+    else
+       Serial.println("- Low light");
+  }
+  if (light>200)
+    digitalWrite(ledlights, LOW);
+  else
+    digitalWrite(ledlights, HIGH);
+}
+
+
+
+// ------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// Stripsimo servo "kefalioy"
+
+void head(int x)
+{
+  if ((debug==1) || (debug==2))
+  {
+    Serial.print("Head at ");
+    Serial.print(x);
+    Serial.println(" degrees");
+  }
+  kefali.write(KEFALIPOS+x);
+  delay(SERVODELAYTIME);
+}
